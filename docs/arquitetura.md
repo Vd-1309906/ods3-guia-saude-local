@@ -1,4 +1,4 @@
-![ods3-guia-saude-local-container](https://github.com/user-attachments/assets/b3e734be-904c-4fbc-aa49-05f902f1a3a7)![ods3-guia-saude-local-container](https://github.com/user-attachments/assets/ad529039-005f-41e4-82d9-191a85655fe6)# Documento de Arquitetura de Software - Guia Saúde Local
+Documento de Arquitetura de Software - Guia Saúde Local
 
 ## 1. Introdução
 
