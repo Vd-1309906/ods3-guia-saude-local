@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "743919580047",
+    "project_id": "ods-3-cf4c7",
+    "storage_bucket": "ods-3-cf4c7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:743919580047:android:6543ab776986c4929851fa",
+        "android_client_info": {
+          "package_name": "com.vsd.ods3"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGAX66CiOfWIcV9M1BYAcAGev88FyUSoU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

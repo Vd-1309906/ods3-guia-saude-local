@@ -22,3 +22,20 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+buildscript {
+    // A sintaxe "ext." vira "val ... by extra"
+    val kotlin_version by extra("1.8.10")    
+    repositories {
+        google()
+        mavenCentral()
+    }
+    
+    dependencies {
+        // A sintaxe "classpath '...'" vira "classpath("...")"
+        classpath("com.android.tools.build:gradle:7.3.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+        
+        // Esta é a linha que adicionamos, agora com a sintaxe correta
+        classpath("com.google.gms:google-services:4.4.1")
+    }
+}
