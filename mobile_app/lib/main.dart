@@ -1,24 +1,31 @@
 import 'package:flutter/material.dart';
 import 'screens/mapa_postos_screen.dart'; 
+import 'screens/campanhas_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; // Importe
+import 'package:firebase_messaging/firebase_messaging.dart'; 
 import 'package:http/http.dart' as http;
+
+// 1. IMPORTAÇÃO ADICIONADA (Gerada pelo 'flutterfire configure')
+import 'firebase_options.dart'; 
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Se você inicializar o Firebase, pode fazer lógica de API aqui
-  // await Firebase.initializeApp();
-
-  print("--- MENSAGEM EM SEGUNDO PLANO RECEBIDA ---");
-  print("Título: ${message.notification?.title}");
-  print("Corpo: ${message.notification?.body}");
+  // Se precisar de lógica de API aqui, inicialize o Firebase
+  // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  debugPrint("--- MENSAGEM EM SEGUNDO PLANO RECEBIDA ---");
+  debugPrint("Título: ${message.notification?.title}");
+  debugPrint("Corpo: ${message.notification?.body}");
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 2. CORREÇÃO DA INICIALIZAÇÃO DO FIREBASE
+  // Agora usa o 'options' para ser compatível com todas as plataformas
   await Firebase.initializeApp(
-      // options: DefaultFirebaseOptions.currentPlatform, // (Use se você usou o FlutterFire CLI)
-      );
+      options: DefaultFirebaseOptions.currentPlatform, 
+  );
+  
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);      
   runApp(const MyApp());
 }
@@ -26,70 +33,97 @@ void main() async {
 Future<void> setupFirebaseMessaging() async {
   FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-  // 1. Pedir permissão ao usuário (iOS e Android 13+)
   NotificationSettings settings = await messaging.requestPermission();
 
   if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-    print('Permissão de notificação concedida!');
+  debugPrint('Permissão de notificação concedida!');
 
-    // 2. Obter o token do dispositivo
     String? token = await messaging.getToken();
 
-    if (token != null) {
-      print('FCM Token: $token');
-      // 3. Enviar o token para o seu back-end
-      try {
-        // (Use o mesmo IP/URL do seu ApiService)
+  if (token != null) {
+  debugPrint('FCM Token: $token');
+  try {
+        // --- ATENÇÃO (LEMBRETE) ---
+        // Este IP (192.168.18.211) é o IP do seu PC na rede Wi-Fi.
+        // Se o seu PC mudar de IP, o app deixará de funcionar
+        // até você atualizar este IP aqui.
         await http.post(
           Uri.parse('http://192.168.18.211:8000/registrar-dispositivo'),
           body: {'token': token},
         );
-        print('Token enviado para o backend com sucesso.');
-      } catch (e) {
-        print('Erro ao enviar token para o backend: $e');
+  debugPrint('Token enviado para o backend com sucesso.');
+        } catch (e) {
+        // (Para um app real, mostraríamos um erro ao utilizador aqui)
+        debugPrint('Erro ao enviar token para o backend: $e');
       }
     }
   } else {
-    print('Permissão de notificação negada.');
+    debugPrint('Permissão de notificação negada.');
   }
 
-  // 4. Lidar com notificações recebidas (simples)
+  // Lidar com notificações com o app aberto
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    print('Recebi uma mensagem com o app aberto!');
+    debugPrint('Recebi uma mensagem com o app aberto!');
     if (message.notification != null) {
-      print('Mensagem: ${message.notification!.body}');
+      debugPrint('Mensagem: ${message.notification!.body}');
     }
   });
 }
 
-// 1. Converte o MyApp para StatefulWidget
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
-// 2. Cria o Estado para o MyApp
 class _MyAppState extends State<MyApp> {
   
-  // 3. Chama a função de setup dentro do initState
   @override
   void initState() {
     super.initState();
-    // ESTA É A LINHA QUE FALTAVA
     setupFirebaseMessaging(); 
   }
 
-  // 4. O método build agora fica dentro do State
+  int _currentIndex = 0;
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Guia Saúde Local',
+      
       theme: ThemeData(
-        primarySwatch: Colors.teal,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        useMaterial3: true,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const MapaPostosScreen(), // A tela inicial agora é a do mapa
+      
+      home: Scaffold(
+        body: IndexedStack(
+          index: _currentIndex,
+          children: const [
+            MapaPostosScreen(),
+            CampanhasScreen(),
+          ],
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.map),
+              label: 'Postos',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.campaign),
+              label: 'Campanhas',
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

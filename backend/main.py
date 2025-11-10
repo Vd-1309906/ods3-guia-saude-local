@@ -22,7 +22,8 @@ app = FastAPI(
 api_client = ExternalAPIService()
 
 # Inclui as rotas de /unidades/...
-app.include_router(unidades_router.router, tags=["Unidades"])
+app.include_router(unidades_router.router, prefix="/unidades", tags=["Unidades"])
+
 
 @app.get("/", tags=["Root"])
 def read_root():
@@ -69,6 +70,7 @@ def enviar_alerta_geral(titulo: Annotated[str, Form()], mensagem: Annotated[str,
         "sucessos": sucessos,
         "falhas": falhas
     }
+
 # --- FIM ROTA NOVA ---
 
 

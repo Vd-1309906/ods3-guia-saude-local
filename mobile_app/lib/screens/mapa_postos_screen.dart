@@ -2,84 +2,90 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../models/posto_saude_model.dart';
 import '../services/api_service.dart';
+import '../services/app_settings.dart';
 import 'package:geolocator/geolocator.dart'; // Certifique-se que isto está importado
 
 class MapaPostosScreen extends StatefulWidget {
-  const MapaPostosScreen({Key? key}) : super(key: key);
+  const MapaPostosScreen({super.key});
 
   @override
-  _MapaPostosScreenState createState() => _MapaPostosScreenState();
+  State<MapaPostosScreen> createState() => _MapaPostosScreenState();
 }
 
 class _MapaPostosScreenState extends State<MapaPostosScreen> {
   final ApiService _apiService = ApiService();
   Future<List<PostoSaude>>? _postosFuture;
+  List<PostoSaude>? _todosPostos; // Lista completa de postos
+  List<Map<String, dynamic>>? _tiposUnidade;
+  int? _selectedTipoCodigo;
+  bool _ignoreMunicipio = false;
+  bool _ignoreUf = false;
+  int? _detectedCodigoUf;
+  String? _detectedUfSigla;
+  String? _detectedCodigoMunicipio;
+  final _raioController = TextEditingController(text: AppSettings.searchRadiusKm.toString()); // Raio inicial
+  double _raioEmKm = AppSettings.searchRadiusKm; // Valor padrão
 
   GoogleMapController? _mapController;
   final Set<Marker> _markers = {};
 
-  // Posição Falsa (Praça Sete, BH) para garantir que o filtro 2km funcione
-  static const LatLng _fakeUserPosition = LatLng(-19.9190, -43.9386);
-  
   // Variável para guardar a localização do usuário
   LatLng? _userPosition;
 
   @override
+  void dispose() {
+    _raioController.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
-    _postosFuture = _fetchPostosComLocalizacao();
+    _fetchInitialData();
   }
 
-  Future<List<PostoSaude>> _fetchPostosComLocalizacao() async {
-    // --- Lógica para pedir permissão (continua igual) ---
-    bool serviceEnabled;
-    LocationPermission permission;
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return Future.error('Serviço de localização está desabilitado.');
+  Future<void> _fetchInitialData() async {
+    // Pega tipos de unidade e localização do usuário
+    try {
+      // buscar tipos CNES
+      final tipos = await _apiService.fetchTiposUnidade();
+      if (mounted) setState(() => _tiposUnidade = tipos);
+    } catch (e) {
+      debugPrint('Erro ao buscar tipos de unidade: $e');
     }
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return Future.error('Permissão de localização foi negada.');
-      }
-    }
-    if (permission == LocationPermission.deniedForever) {
-      return Future.error('Permissão de localização negada permanentemente.');
-    }
-    // --- Fim: Lógica para pedir permissão ---
 
-    // ----- INÍCIO DA MUDANÇA (LOCALIZAÇÃO FORÇADA) -----
-    
-    // Posição real (comentada por agora para testes)
-    // Position position = await Geolocator.getCurrentPosition(
-    //     desiredAccuracy: LocationAccuracy.high);
-
-    // Posição Falsa (Praça Sete, BH) para garantir que o filtro 2km funcione
-    Position position = Position(
-        latitude: _fakeUserPosition.latitude,
-        longitude: _fakeUserPosition.longitude,
-        timestamp: DateTime.now(),
-        accuracy: 0, altitude: 0, altitudeAccuracy: 0,
-        heading: 0, headingAccuracy: 0, speed: 0, speedAccuracy: 0
-    );
-    
-    print('Localização (FORÇADA PARA TESTE): ${position.latitude}, ${position.longitude}');
-    // ----- FIM DA MUDANÇA -----
-
-
-    // Guarda a posição do usuário e move a câmera
-    if (mounted) {
-      setState(() {
-        _userPosition = LatLng(position.latitude, position.longitude);
-      });
+    // Obtém localização e tenta detectar códigos UF/município via backend
+    try {
+      final Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      debugPrint('Localização do usuário: ${position.latitude}, ${position.longitude}');
+      if (mounted) setState(() => _userPosition = LatLng(position.latitude, position.longitude));
       _moveCameraToPosition(_userPosition!);
+
+      try {
+        final codes = await _apiService.getUfMunicipioCodesFromCoords(position.latitude, position.longitude);
+        if (mounted) {
+          setState(() {
+            _detectedCodigoMunicipio = (codes['codigo_municipio'] ?? '')?.toString();
+            _detectedCodigoUf = codes['codigo_uf'] is int ? codes['codigo_uf'] as int : int.tryParse((codes['codigo_uf'] ?? '').toString());
+            _detectedUfSigla = codes['uf_sigla']?.toString() ?? '';
+          });
+        }
+      } catch (e) {
+        debugPrint('Erro ao obter códigos por coords: $e');
+      }
+    } catch (e) {
+      debugPrint('Erro ao obter localização do usuário: $e');
     }
 
-    // A API é chamada (o backend vai ignorar a lat/lon e usar o código de BH)
-    return _apiService.getPostosDeSaude(position.latitude, position.longitude);
+    // mantém _postosFuture vazio até o usuário realizar busca por tipo
+    setState(() {
+      _postosFuture = Future.value(<PostoSaude>[]);
+    });
   }
+
+  // Nota: a busca inicial de tipos e códigos por coordenadas é feita em
+  // _fetchInitialData(); a busca de estabelecimentos é executada quando o
+  // usuário escolhe um tipo e pressiona "Buscar estabelecimentos".
 
   // Função para mover a câmera
   void _moveCameraToPosition(LatLng position, {double zoom = 14.0}) {
@@ -94,36 +100,198 @@ class _MapaPostosScreenState extends State<MapaPostosScreen> {
     _moveCameraToPosition(postoPosition, zoom: 16.0); 
   }
 
+  void _atualizarListaPostos() {
+    if (_todosPostos != null && _userPosition != null) {
+      setState(() {
+        // Atualiza o raio em km baseado no valor do campo de texto
+        _raioEmKm = double.tryParse(_raioController.text) ?? AppSettings.searchRadiusKm;
+        AppSettings.searchRadiusKm = _raioEmKm;
+        // Recarrega a lista de postos para atualizar a UI
+        _postosFuture = Future.value(_todosPostos);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Postos a menos de 2km'), // Título atualizado
+        title: const Text('Postos próximos'),
         backgroundColor: Colors.teal,
       ),
       body: Column(
         children: [
-          // Mapa
+          // Mapa reduzido com cantos arredondados
           Expanded(
-            flex: 5, 
-            child: GoogleMap(
-              initialCameraPosition: const CameraPosition(
-                target: _fakeUserPosition, // Mapa começa na Praça Sete
-                zoom: 14,
+            flex: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(12.0),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black12,
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: GoogleMap(
+                    initialCameraPosition: const CameraPosition(
+                      target: LatLng(-19.9168, -43.9345), // Centro de BH como posição inicial
+                      zoom: 14,
+                    ),
+                    myLocationEnabled: true, // Mostra o "ponto azul"
+                    markers: _markers,
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                      if (_userPosition != null) {
+                        _moveCameraToPosition(_userPosition!);
+                      }
+                    },
+                  ),
+                ),
               ),
-              myLocationEnabled: true, // Mostra o "ponto azul" (que será o falso)
-              markers: _markers,
-              onMapCreated: (controller) {
-                _mapController = controller;
-                if (_userPosition != null) {
-                  _moveCameraToPosition(_userPosition!);
-                }
-              },
             ),
           ),
-          // Lista
-          Expanded(
-            flex: 5,
+          // Lista (ocupando um pouco mais de espaço agora)
+            // Filtros CNES (tipo / UF / município)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Tipo de estabelecimento:', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  (_tiposUnidade == null)
+                      ? const CircularProgressIndicator()
+                      : DropdownButton<int>(
+                          isExpanded: true,
+                          value: _selectedTipoCodigo,
+                          hint: const Text('Selecione um tipo'),
+                          items: _tiposUnidade!.map((t) {
+                            final codigo = (t['codigo_tipo_unidade'] is int) ? t['codigo_tipo_unidade'] as int : int.tryParse((t['codigo_tipo_unidade'] ?? '').toString()) ?? 0;
+                            return DropdownMenuItem<int>(
+                              value: codigo,
+                              child: Text('${t['descricao_tipo_unidade'] ?? t['codigo_tipo_unidade']}'),
+                            );
+                          }).toList(),
+                          onChanged: (v) {
+                            setState(() => _selectedTipoCodigo = v);
+                          },
+                        ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Ignorar município'),
+                          value: _ignoreMunicipio,
+                          onChanged: (v) => setState(() => _ignoreMunicipio = v ?? false),
+                        ),
+                      ),
+                      Expanded(
+                        child: CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Ignorar estado (UF)'),
+                          value: _ignoreUf,
+                          onChanged: (v) => setState(() => _ignoreUf = v ?? false),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_detectedCodigoUf != null || (_detectedCodigoMunicipio != null && _detectedCodigoMunicipio!.isNotEmpty))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6.0),
+                      child: Text('Detectado: UF=${_detectedUfSigla ?? _detectedCodigoUf ?? '-'}  Município=${_detectedCodigoMunicipio ?? '-'}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+            // Campo de raio (abaixo dos filtros)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+              child: Row(
+                children: [
+                  const Expanded(child: Text('Raio (km):', style: TextStyle(fontWeight: FontWeight.w600))),
+                  SizedBox(
+                    width: 120,
+                    child: TextField(
+                      controller: _raioController,
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                        hintText: 'km',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                      ),
+                      onSubmitted: (_) => _atualizarListaPostos(),
+                    ),
+                  ),
+                  IconButton(onPressed: _atualizarListaPostos, icon: const Icon(Icons.refresh)),
+                ],
+              ),
+            ),
+            // Botão de busca abaixo do campo de raio
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: ElevatedButton(
+                  onPressed: _selectedTipoCodigo == null
+                      ? null
+                      : () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          try {
+                            final codigoUf = _ignoreUf ? null : _detectedCodigoUf;
+                            final codigoMun = _ignoreMunicipio
+                                ? null
+                                : (_detectedCodigoMunicipio != null && _detectedCodigoMunicipio!.isNotEmpty
+                                    ? int.tryParse(_detectedCodigoMunicipio!)
+                                    : null);
+                            final lista = await _apiService.fetchEstabelecimentosPorTipo(
+                              codigoTipoUnidade: _selectedTipoCodigo!,
+                              codigoUf: codigoUf,
+                              codigoMunicipio: codigoMun,
+                              limit: 200,
+                              offset: 0,
+                            );
+
+                            final postos = lista
+                                .map((p) => PostoSaude(
+                                      id: (p['id'] ?? '').toString(),
+                                      nome: (p['nome'] ?? '').toString(),
+                                      endereco: (p['endereco'] ?? '').toString(),
+                                      latitude: (p['latitude'] is double)
+                                          ? p['latitude'] as double
+                                          : double.tryParse((p['latitude'] ?? '0').toString()) ?? 0.0,
+                                      longitude: (p['longitude'] is double)
+                                          ? p['longitude'] as double
+                                          : double.tryParse((p['longitude'] ?? '0').toString()) ?? 0.0,
+                                    ))
+                                .where((pst) => pst.latitude != 0.0 && pst.longitude != 0.0)
+                                .toList();
+
+                            setState(() {
+                              _todosPostos = postos;
+                              _postosFuture = Future.value(_todosPostos);
+                            });
+                          } catch (e) {
+                            debugPrint('Erro ao buscar estabelecimentos CNES: $e');
+                            if (!mounted) return;
+                            messenger.showSnackBar(SnackBar(content: Text('Erro ao buscar estabelecimentos: $e')));
+                          }
+                        },
+                  child: const Text('Buscar estabelecimentos'),
+                ),
+              ),
+            ),
+            Expanded(
+            flex: 6,
             child: FutureBuilder<List<PostoSaude>>(
               future: _postosFuture,
               builder: (context, snapshot) {
@@ -146,7 +314,7 @@ class _MapaPostosScreenState extends State<MapaPostosScreen> {
                     return const Center(child: Text("A obter localização para filtrar..."));
                   }
 
-                  const double raioEmMetros = 2000; // 2 KM
+                  final double raioEmMetros = _raioEmKm * 1000; // Converte km para metros
                   final List<PostoSaude> postosProximos = [];
 
                   for (final posto in postos) {
@@ -165,8 +333,8 @@ class _MapaPostosScreenState extends State<MapaPostosScreen> {
                   }
 
                   if (postosProximos.isEmpty) {
-                    return const Center(
-                        child: Text('Nenhum posto encontrado a menos de 2km.'));
+                    return Center(
+                        child: Text('Nenhum posto encontrado a menos de ${_raioController.text}km.'));
                   }
                   // ----- FIM DA LÓGICA DO FILTRO 2KM -----
 
@@ -224,4 +392,5 @@ class _MapaPostosScreenState extends State<MapaPostosScreen> {
       ),
     );
   }
+
 }
