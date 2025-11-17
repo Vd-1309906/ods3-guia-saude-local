@@ -48,7 +48,7 @@ Future<void> setupFirebaseMessaging() async {
         // Se o seu PC mudar de IP, o app deixará de funcionar
         // até você atualizar este IP aqui.
         await http.post(
-          Uri.parse('http://192.168.18.211:8000/registrar-dispositivo'),
+          Uri.parse('http://192.168.18.210:8000/registrar-dispositivo'),
           body: {'token': token},
         );
   debugPrint('Token enviado para o backend com sucesso.');

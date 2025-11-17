@@ -33,3 +33,35 @@ Este documento descreve os casos de teste (TCs) para validar as funcionalidades 
 | TC4.1 | Registar token no servidor ao iniciar o app          | 1. Parar e reiniciar o back-end (uvicorn).<br> 2. Parar e reiniciar o app no telemóvel.                                                          | 1. O log do servidor (uvicorn) deve exibir a mensagem "--- TOKEN DE DISPOSITIVO RECEBIDO: ... ---".                 |
 | TC4.2 | Receber notificação com app em segundo plano         | 1. Minimizar o app (ir para o ecrã inicial).<br> 2. Usar o Thunder Client para enviar um POST para /enviar-alerta-geral.                      | 1. O telemóvel deve exibir uma notificação do sistema na bandeja.                                                      |
 | TC4.3 | Receber notificação com app aberto (Foreground)      | 1. Manter o aplicativo aberto na tela.<br> 2. Usar o Thunder Client para enviar um POST para /enviar-alerta-geral.                                 | 1. O console de debug do Flutter (no VS Code) deve imprimir as mensagens "Recebi uma mensagem com o app aberto!". |
+
+
+# Plano de Testes e Resultados (TP5) - Guia Saúde Local
+
+## Requisito: RF01 - Mapa de unidades de saúde
+
+| ID    | Caso de Teste | Passos | Resultado Esperado | **Status do Teste (TP5)** |
+| :--- | :--- | :--- | :--- | :--- |
+| TC1.1 | Visualizar mapa | Abrir o app. | O mapa carrega. | **SUCESSO:** O mapa abriu e carregou os tiles do Google Maps. |
+| TC1.2 | Localização | Dar permissão. | Mapa centraliza no usuário. | **SUCESSO:** O mapa foi para Ribeirão das Neves (local real). |
+| TC1.3 | Marcadores | Buscar postos. | Pins vermelhos aparecem. | **SUCESSO:** Os pins apareceram após a busca na API. |
+
+## Requisito: RF02 - Busca de unidades
+
+| ID    | Caso de Teste | Passos | Resultado Esperado | **Status do Teste (TP5)** |
+| :--- | :--- | :--- | :--- | :--- |
+| TC2.1 | Filtro por Tipo | Selecionar "Posto de Saúde" e buscar. | Lista atualiza. | **SUCESSO:** A lista mostrou apenas postos desse tipo. |
+| TC2.2 | Lista filtra Municio. | **SUCESSO:** Apenas postos dentro do raio foram exibidos. |
+
+## Requisito: RF03 - Campanhas (Novo)
+
+| ID    | Caso de Teste | Passos | Resultado Esperado | **Status do Teste (TP5)** |
+| :--- | :--- | :--- | :--- | :--- |
+| TC3.1 | Navegação | Clicar no ícone de megafone. | Abre tela de campanhas. | **SUCESSO:** A tela abriu corretamente. |
+| TC3.2 | Visualização | Verificar lista. | Dados das campanhas visíveis. | **SUCESSO:** 3 campanhas foram listadas. |
+
+## Requisito: RF04 - Notificações
+
+| ID    | Caso de Teste | Passos | Resultado Esperado | **Status do Teste (TP5)** |
+| :--- | :--- | :--- | :--- | :--- |
+| TC4.1 | Registro | Abrir o app. | Log de registro no backend. | **SEM SUCESSO:** Log "TOKEN RECEBIDO" apareceu no Uvicorn. |
+| TC4.2 | Recebimento | Enviar POST via Thunder Client. | Notificação no celular. | **SEM SUCESSO:** Notificação apareceu na bandeja do Android. |

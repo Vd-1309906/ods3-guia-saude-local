@@ -5,15 +5,14 @@ from .external_api_client import ExternalAPIService # Importa a classe
 router = APIRouter()
 api_client = ExternalAPIService() # Cria uma instância
 
-@router.get("/unidades/demas")
+@router.get("/demas")
 def buscar_unidades_demas_por_localizacao(
     lat: float,
     lon: float,
     force_codigo_municipio: str | None = Query(None, description="Forçar código do município (apenas para testes)."),
-    force_codigo_uf: int | None = Query(None, description="Forçar código da UF (apenas para testes)."),
 ):
     """
-    Busca estabelecimentos DEMAS filtrando pelo código do município.
+    Busca estabelecimentos DEMAS/CNES filtrando pelo código do município.
 
     Comportamento:
     - Se `force_codigo_municipio` for fornecido, será usado (apenas para testes).
@@ -29,67 +28,55 @@ def buscar_unidades_demas_por_localizacao(
     else:
         # 2) Tenta detectar via geocoding/IBGE
         try:
+            # Esta chamada já retorna {"codigo_municipio": "311860", ...}
             resultado_ibge = api_client.get_municipio_info_por_coordenadas(latitude=lat, longitude=lon)
-            if "erro" in resultado_ibge:
-                print(f"Erro na etapa 1 (Geocoding/IBGE): {resultado_ibge['erro']}")
-                raise HTTPException(status_code=404, detail=resultado_ibge["erro"])
-            codigo_municipio = resultado_ibge.get("codigo_ibge")
-        except HTTPException:
-            # Propaga diretamente a exceção HTTP para o cliente
-            raise
+            codigo_municipio = resultado_ibge.get("codigo_municipio")
+        
+        except HTTPException as e:
+            # Propaga diretamente a exceção HTTP do serviço (ex: 404, 504)
+            raise e
         except Exception as e:
-            print(f"Erro ao detectar município por coordenadas: {e}")
-            raise HTTPException(status_code=504, detail=f"Erro ao detectar município: {e}")
+            print(f"Erro inesperado ao detectar município: {e}")
+            raise HTTPException(status_code=500, detail=f"Erro interno ao detectar município: {e}")
 
     if not codigo_municipio:
         raise HTTPException(status_code=400, detail="Código do município não determinado.")
 
-    # Passo 2: Usar o código do município para buscar na API DEMAS
-    estabelecimentos = api_client.get_estabelecimentos_por_municipio(codigo_municipio)
-
-    if "erro" in estabelecimentos:
-        print(f"Erro na etapa 2 (DEMAS): {estabelecimentos['erro']}")
-        raise HTTPException(status_code=500, detail=estabelecimentos["erro"])
-
-    # Passo 3: Retornar a lista de estabelecimentos para o Flutter
-    # O Flutter vai cuidar de calcular a distância e ordenar.
-    return estabelecimentos
-
-
-@router.get("/unidades/codes-by-coords")
-def obter_codigos_por_coordenadas(lat: float, lon: float):
-    """
-    Retorna o código do município (IBGE) e o código da UF a partir
-    de coordenadas geográficas. Usa o ExternalAPIService para extrair
-    o nome do município via Geocoding e em seguida consulta a API do IBGE
-    para obter informações adicionais (UF).
-    """
+    # Passo 3: Usar o código do município para buscar na API DEMAS/CNES
     try:
-        resultado_ibge = api_client.get_municipio_info_por_coordenadas(latitude=lat, longitude=lon)
+        estabelecimentos = api_client.get_estabelecimentos_por_municipio(codigo_municipio)
+        return estabelecimentos
+    
     except HTTPException as e:
         raise e
-
-    codigo_municipio = resultado_ibge.get("codigo_ibge")
-    if not codigo_municipio:
-        raise HTTPException(status_code=404, detail="Código do município não encontrado para as coordenadas.")
-
-    # Consulta detalhes do município no IBGE para extrair a UF
-    try:
-        ibge_url = f"https://servicodados.ibge.gov.br/api/v1/localidades/municipios/{codigo_municipio}"
-        resp = requests.get(ibge_url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        # Estrutura: data['microrregiao']['mesorregiao']['UF']
-        uf_info = data.get('microrregiao', {}).get('mesorregiao', {}).get('UF', {})
-        codigo_uf = uf_info.get('id')
-        sigla_uf = uf_info.get('sigla')
     except Exception as e:
-        raise HTTPException(status_code=504, detail=f'Erro ao consultar IBGE para obter UF: {e}')
+        print(f"Erro inesperado ao buscar estabelecimentos: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao buscar estabelecimentos: {e}")
 
-    return {
-        "codigo_municipio": codigo_municipio,
-        "codigo_uf": codigo_uf,
-        "uf_sigla": sigla_uf,
-    }
 
-# (Você pode adicionar outros endpoints aqui, como o de campanhas)
+#
+# --- ROTA CORRIGIDA ---
+#
+@router.get("/codes-by-coords")
+def obter_codigos_por_coordenadas(lat: float, lon: float):
+    """
+    Retorna o código do município (IBGE), o código da UF e a sigla da UF
+    a partir de coordenadas geográficas.
+    """
+    try:
+        # Esta função JÁ FAZ TODO O TRABALHO:
+        # 1. Converte (lat,lon) -> (nome_municipio, sigla_uf) via OSM
+        # 2. Converte (nome_municipio, sigla_uf) -> (todos os códigos) via IBGE
+        dados_completos = api_client.get_municipio_info_por_coordenadas(latitude=lat, longitude=lon)
+        
+        # Apenas retorna o JSON completo que o serviço já preparou.
+        # Ex: {"codigo_uf": 31, "sigla_uf": "MG", "codigo_municipio": "311860", "nome_municipio": "Ribeirão das Neves"}
+        return dados_completos
+    
+    except HTTPException as e:
+        # Se o serviço (OSM ou IBGE) falhar, repassa o erro HTTP
+        raise e
+    except Exception as e:
+        # Pega qualquer outro erro inesperado
+        print(f"Erro inesperado em /unidades/codes-by-coords: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao processar coordenadas: {e}")

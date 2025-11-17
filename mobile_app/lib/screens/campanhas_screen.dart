@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/vacinacao_service.dart';
-import '../services/app_settings.dart';
 import 'package:geolocator/geolocator.dart';
 
 class CampanhasScreen extends StatefulWidget {
@@ -14,287 +13,213 @@ class CampanhasScreen extends StatefulWidget {
 class _CampanhasScreenState extends State<CampanhasScreen> {
   final ApiService _apiService = ApiService();
   final VacinacaoService _vacinacaoService = VacinacaoService();
+  
   List<GrupoVacina>? _gruposVacina;
-  List<GrupoVacina>? _gruposOriginais; // guarda grupos não filtrados
-  List<dynamic>? _todosPostos; // postos carregados para filtragem (mapa simple)
-  final _raioController = TextEditingController(text: AppSettings.searchRadiusKm.toString());
-  double _raioEmKm = AppSettings.searchRadiusKm;
+  
   bool _loading = true;
   String? _error;
-  Position? _userPosition;
+  String? _cidadeDetectada;
+  String? _ufDetectada;
 
   @override
   void initState() {
     super.initState();
-    _carregarCampanhas();
+    _iniciarBuscaInteligente();
   }
 
-  Future<void> _carregarCampanhas() async {
-    try {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-
-      final grupos = await _vacinacaoService.fetchGruposPorVacina(limit: 500, offset: 0);
-
-      try {
-        _userPosition = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      } catch (_) {
-        _userPosition = null;
-      }
-
-      // Se conseguimos posição, carregamos postos locais para filtrar
-      if (_userPosition != null) {
-        try {
-          _todosPostos = await _apiServiceGetPostos(_userPosition!.latitude, _userPosition!.longitude);
-        } catch (_) {
-          _todosPostos = [];
-        }
-      } else {
-        _todosPostos = [];
-      }
-
-      // Guarda originais e aplica filtro inicial conforme raio
-      _gruposOriginais = grupos;
-      final filtered = _filtrarGruposPorRaio(grupos);
-
-      setState(() {
-        _gruposVacina = filtered;
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Erro ao carregar campanhas de vacinação: $e';
-        _loading = false;
-      });
-    }
-  }
-
-  // Filtra as listas de estabelecimentos por postos próximos dentro do raio
-  List<GrupoVacina> _filtrarGruposPorRaio(List<GrupoVacina> grupos) {
-    if (_userPosition == null) return grupos;
-
-    final double raioMetros = _raioEmKm * 1000;
-
-    List<GrupoVacina> result = [];
-
-    for (final g in grupos) {
-      final List<EstabelecimentoVacina> matches = [];
-      for (final est in g.estabelecimentos) {
-        // verifica se existe algum posto que case por nome/cnes e esteja dentro do raio
-        bool hasNearby = false;
-        for (final posto in _todosPostos ?? []) {
-          final nomePosto = (posto['nome'] ?? '').toString().toLowerCase();
-          final nomeEst = est.nome.toLowerCase();
-          final matchesName = nomePosto.contains(nomeEst) || nomeEst.contains(nomePosto);
-          final matchesCnes = est.codigoCnes.isNotEmpty && (posto['id']?.toString() == est.codigoCnes);
-          if (matchesName || matchesCnes) {
-            final lat = (posto['latitude'] as double?) ?? 0.0;
-            final lon = (posto['longitude'] as double?) ?? 0.0;
-            if (lat == 0.0 && lon == 0.0) continue;
-            final distancia = Geolocator.distanceBetween(_userPosition!.latitude, _userPosition!.longitude, lat, lon);
-            if (distancia <= raioMetros) {
-              hasNearby = true;
-              break;
-            }
-          }
-        }
-        if (hasNearby) matches.add(est);
-      }
-      if (matches.isNotEmpty) {
-        result.add(GrupoVacina(codigo: g.codigo, descricao: g.descricao, estabelecimentos: matches));
-      }
-    }
-    return result;
-  }
-
-  void _onRaioChanged(String value) {
+  Future<void> _iniciarBuscaInteligente() async {
+    if (!mounted) return;
     setState(() {
-      _raioEmKm = double.tryParse(value) ?? _raioEmKm;
-      AppSettings.searchRadiusKm = _raioEmKm;
-      if (_gruposOriginais != null) {
-        _gruposVacina = _filtrarGruposPorRaio(_gruposOriginais!);
-      }
+      _loading = true;
+      _error = null;
+      _gruposVacina = null;
     });
+
+    try {
+      // 1. Pegar coordenadas GPS
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      
+      // 2. Converter GPS -> Nome da Cidade (via Backend Python)
+      // O backend retorna algo como: {"nome_municipio": "Ribeirão das Neves", "sigla_uf": "MG", ...}
+      final dadosLoc = await _apiService.getUfMunicipioCodesFromCoords(
+        position.latitude, 
+        position.longitude
+      );
+
+      final cidade = dadosLoc['nome_municipio'] as String?;
+      final uf = dadosLoc['sigla_uf'] as String?; // Ou 'uf_sigla' dependendo do seu backend
+
+      if (cidade == null) {
+        throw Exception("Não foi possível identificar o nome da sua cidade.");
+      }
+
+      setState(() {
+        _cidadeDetectada = cidade;
+        _ufDetectada = uf;
+      });
+
+      // 3. Buscar vacinas filtrando pela cidade encontrada
+      // O loop de 10 segundos acontece aqui dentro
+      final grupos = await _vacinacaoService.fetchGruposPorVacina(
+        limit: 200, 
+        offset: 200, // Começar de um offset maior as vezes ajuda a pegar dados recentes
+        filtroMunicipio: cidade,
+        filtroUf: uf
+      );
+
+      if (mounted) {
+        setState(() {
+          _gruposVacina = grupos;
+          _loading = false;
+        });
+      }
+
+    } catch (e) {
+      debugPrint("Erro na busca: $e");
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Campanhas de Vacinação'),
+        title: const Text('Campanhas na sua Cidade'),
         backgroundColor: Colors.teal,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _carregarCampanhas,
+            onPressed: _iniciarBuscaInteligente,
+            tooltip: 'Recarregar',
           ),
         ],
       ),
-      body: _buildBody(),
+      body: Column(
+        children: [
+          // Header informativo
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16.0),
+            color: Colors.teal[50],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _cidadeDetectada != null 
+                      ? "Buscando locais em: $_cidadeDetectada - $_ufDetectada"
+                      : "Detectando sua localização...",
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  "O sistema buscará até encontrar 10 locais ou por 10 segundos.",
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          
+          // Conteúdo Principal
+          Expanded(
+            child: _buildContent(),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildBody() {
-    // Always show the radius input at the top so the user can change it even when there are no groups
-    final radiusField = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-      child: Row(
-        children: [
-          const Expanded(child: Text('Raio (km):', style: TextStyle(fontWeight: FontWeight.w600))),
-          SizedBox(
-            width: 120,
-            child: TextField(
-              controller: _raioController,
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                hintText: 'km',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-              ),
-              onChanged: _onRaioChanged,
-            ),
-          ),
-        ],
-      ),
-    );
-
-    // Content area below the radius field
-    Widget content;
+  Widget _buildContent() {
     if (_loading) {
-      content = const Center(child: CircularProgressIndicator());
-    } else if (_error != null) {
-      content = Center(
+      return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-            const SizedBox(height: 16),
-            ElevatedButton(onPressed: _carregarCampanhas, child: const Text('Tentar novamente')),
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text("Varrendo base de dados do governo..."),
+            Text("Isso pode levar alguns segundos.", style: TextStyle(fontSize: 12, color: Colors.grey)),
           ],
         ),
       );
-    } else if (_gruposVacina == null || _gruposVacina!.isEmpty) {
-      content = const Center(child: Text('Nenhuma campanha de vacinação encontrada'));
-    } else {
-      content = RefreshIndicator(
-        onRefresh: _carregarCampanhas,
-        child: ListView.builder(
-          itemCount: _gruposVacina!.length,
-          itemBuilder: (context, index) {
-            final grupo = _gruposVacina![index];
-            return _buildGrupoVacinaCard(grupo);
-          },
+    }
+    
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text("Ocorreu um erro:", style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _iniciarBuscaInteligente,
+                child: const Text('Tentar novamente'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    return Column(
-      children: [
-        radiusField,
-        Expanded(child: content),
-      ],
+    if (_gruposVacina == null || _gruposVacina!.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20.0),
+          child: Text(
+            'Nenhum registro de vacinação recente encontrado para o seu município nos dados abertos do governo.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: Colors.grey),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(8),
+      itemCount: _gruposVacina!.length,
+      itemBuilder: (context, index) {
+        return _buildGrupoVacinaCard(_gruposVacina![index]);
+      },
     );
   }
 
   Widget _buildGrupoVacinaCard(GrupoVacina grupo) {
-    // Calcula postos correspondentes a este grupo dentro do raio
-    final postosParaGrupo = _postosParaGrupo(grupo);
-
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      elevation: 2,
+      margin: const EdgeInsets.symmetric(vertical: 6),
       child: ExpansionTile(
-        title: Text(grupo.descricao.isNotEmpty ? grupo.descricao : grupo.codigo, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('Postos próximos: ${postosParaGrupo.length}'),
-        leading: const Icon(Icons.health_and_safety, color: Colors.teal),
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Column(
-              children: postosParaGrupo.isNotEmpty
-                  ? postosParaGrupo.map((posto) {
-                      return ListTile(
-                        title: Text(posto['nome'] ?? 'Nome desconhecido'),
-                        subtitle: Text('${posto['endereco'] ?? ''}'),
-                        leading: const Icon(Icons.local_hospital, color: Colors.red),
-                        onTap: () {
-                          // Move camera / highlight could be implemented in map screen; here we simply show details
-                          if (mounted) {
-                            showDialog(
-                              context: context,
-                              builder: (_) => AlertDialog(
-                                title: Text(posto['nome'] ?? 'Detalhes'),
-                                content: Text('${posto['endereco'] ?? ''}\nID: ${posto['id'] ?? ''}\nEstado (UF): ${posto['uf'] ?? posto['municipio'] ?? ''}'),
-                                actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
-                              ),
-                            );
-                          }
-                        },
-                      );
-                    }).toList()
-                  : [
-                      const ListTile(
-                        title: Text('Nenhum posto próximo encontrado para esta vacina.'),
-                      )
-                    ],
-            ),
-          ),
-        ],
+        title: Text(
+          grupo.descricao.isNotEmpty ? grupo.descricao : "Vacina ${grupo.codigo}",
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+        ),
+        subtitle: Text(
+          '${grupo.estabelecimentos.length} locais encontrados',
+          style: TextStyle(color: Colors.teal[700]),
+        ),
+        leading: CircleAvatar(
+          backgroundColor: Colors.teal[100],
+          child: const Icon(Icons.local_hospital, color: Colors.teal),
+        ),
+        children: grupo.estabelecimentos.map((est) {
+          return ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.only(left: 16, right: 16, bottom: 4),
+            leading: const Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+            title: Text(est.nome, style: const TextStyle(fontWeight: FontWeight.w500)),
+            subtitle: Text("CNES: ${est.codigoCnes}"),
+          );
+        }).toList(),
       ),
     );
-  }
-
-  // Retorna lista de postos (maps) que correspondem aos estabelecimentos do grupo
-  List<Map<String, dynamic>> _postosParaGrupo(GrupoVacina grupo) {
-    final List<Map<String, dynamic>> encontrados = [];
-    if (_userPosition == null) return encontrados;
-    final double raioMetros = _raioEmKm * 1000;
-    final postos = _todosPostos ?? [];
-
-    for (final est in grupo.estabelecimentos) {
-      for (final posto in postos) {
-        final nomePosto = (posto['nome'] ?? '').toString().toLowerCase();
-        final nomeEst = est.nome.toLowerCase();
-        final matchesName = nomePosto.contains(nomeEst) || nomeEst.contains(nomePosto);
-        final matchesCnes = est.codigoCnes.isNotEmpty && (posto['id']?.toString() == est.codigoCnes);
-        if (matchesName || matchesCnes) {
-          final lat = (posto['latitude'] as double?) ?? 0.0;
-          final lon = (posto['longitude'] as double?) ?? 0.0;
-          if (lat == 0.0 && lon == 0.0) continue;
-          final distancia = Geolocator.distanceBetween(_userPosition!.latitude, _userPosition!.longitude, lat, lon);
-          if (distancia <= raioMetros) {
-            // evita duplicatas por id
-            final id = posto['id']?.toString() ?? posto['nome']?.toString() ?? '';
-            if (!encontrados.any((p) => (p['id']?.toString() ?? '') == id)) {
-              encontrados.add(Map<String, dynamic>.from(posto as Map));
-            }
-          }
-        }
-      }
-    }
-
-    return encontrados;
-  }
-
-  
-
-  // Helper: chama a API de postos (usa ApiService existente)
-  Future<List<dynamic>> _apiServiceGetPostos(double lat, double lon) async {
-    try {
-      // Use raw version to get additional metadata (uf/municipio) when present
-      final lista = await _apiService.getPostosDeSaudeRaw(lat, lon);
-      return lista.map((p) => {
-        'nome': p['nome'],
-        'id': p['id'],
-        'endereco': p['endereco'],
-        'latitude': p['latitude'],
-        'longitude': p['longitude'],
-        'municipio': p['municipio'] ?? '',
-        'uf': p['uf'] ?? '',
-      }).toList();
-    } catch (e) {
-      return [];
-    }
   }
 }

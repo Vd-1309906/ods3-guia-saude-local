@@ -6,6 +6,7 @@ class PostoSaude {
   final String endereco;
   final double latitude;
   final double longitude;
+  double? distancia;
 
   PostoSaude({
     required this.id,
@@ -13,6 +14,8 @@ class PostoSaude {
     required this.endereco,
     required this.latitude,
     required this.longitude,
+    this.distancia,
+
   });
 
   //
