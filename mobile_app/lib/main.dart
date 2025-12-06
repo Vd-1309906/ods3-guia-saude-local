@@ -1,102 +1,123 @@
 import 'package:flutter/material.dart';
-import 'screens/mapa_postos_screen.dart'; 
-import 'screens/campanhas_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 
-// 1. IMPORTAÇÃO ADICIONADA (Gerada pelo 'flutterfire configure')
-import 'firebase_options.dart'; 
+import 'screens/mapa_postos_screen.dart';
+import 'screens/campanhas_screen.dart';
+import 'firebase_options.dart';
 
+/// =======================================================
+/// HANDLER PARA MENSAGENS EM BACKGROUND
+/// =======================================================
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Se precisar de lógica de API aqui, inicialize o Firebase
-  // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  debugPrint("--- MENSAGEM EM SEGUNDO PLANO RECEBIDA ---");
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  debugPrint("===== MENSAGEM EM BACKGROUND =====");
   debugPrint("Título: ${message.notification?.title}");
   debugPrint("Corpo: ${message.notification?.body}");
+  debugPrint("Dados: ${message.data}");
 }
 
+/// =======================================================
+/// FUNÇÃO PRINCIPAL
+/// =======================================================
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 2. CORREÇÃO DA INICIALIZAÇÃO DO FIREBASE
-  // Agora usa o 'options' para ser compatível com todas as plataformas
+
+  // Inicializa Firebase corretamente
   await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform, 
+    options: DefaultFirebaseOptions.currentPlatform,
   );
-  
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);      
+
+  // Registrar handler de background ANTES do runApp()
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   runApp(const MyApp());
 }
 
+/// =======================================================
+/// CONFIGURAÇÃO DO FIREBASE MESSAGING
+/// =======================================================
 Future<void> setupFirebaseMessaging() async {
   FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-  NotificationSettings settings = await messaging.requestPermission();
+  // Pedir permissão
+  NotificationSettings settings = await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
 
   if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-  debugPrint('Permissão de notificação concedida!');
+    debugPrint("Permissão de notificação concedida!");
 
+    // Obter token FCM
     String? token = await messaging.getToken();
+    debugPrint("TOKEN FCM: $token");
 
-  if (token != null) {
-  debugPrint('FCM Token: $token');
-  try {
-        // --- ATENÇÃO (LEMBRETE) ---
-        // Este IP (192.168.18.211) é o IP do seu PC na rede Wi-Fi.
-        // Se o seu PC mudar de IP, o app deixará de funcionar
-        // até você atualizar este IP aqui.
+    if (token != null) {
+      try {
         await http.post(
-          Uri.parse('http://192.168.18.210:8000/registrar-dispositivo'),
-          body: {'token': token},
+          Uri.parse("http://192.168.18.210:8000/registrar-dispositivo"),
+          body: {"token": token},
         );
-  debugPrint('Token enviado para o backend com sucesso.');
-        } catch (e) {
-        // (Para um app real, mostraríamos um erro ao utilizador aqui)
-        debugPrint('Erro ao enviar token para o backend: $e');
+        debugPrint("Token enviado ao backend!");
+      } catch (e) {
+        debugPrint("Erro ao enviar token: $e");
       }
     }
   } else {
-    debugPrint('Permissão de notificação negada.');
+    debugPrint("Permissão de notificação negada pelo usuário.");
   }
 
-  // Lidar com notificações com o app aberto
+  /// RECEBENDO NOTIFICAÇÕES COM O APP ABERTO
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    debugPrint('Recebi uma mensagem com o app aberto!');
-    if (message.notification != null) {
-      debugPrint('Mensagem: ${message.notification!.body}');
-    }
+    debugPrint("===== NOTIFICAÇÃO EM FOREGROUND =====");
+    debugPrint("Título: ${message.notification?.title}");
+    debugPrint("Corpo: ${message.notification?.body}");
+    debugPrint("Dados: ${message.data}");
+  });
+
+  /// NOTIFICAÇÃO CLICADA PELO USUÁRIO
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    debugPrint("Usuário abriu o app clicando na notificação");
+    debugPrint("Dados: ${message.data}");
   });
 }
 
+/// =======================================================
+/// APP PRINCIPAL
+/// =======================================================
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
-  
+  int _currentIndex = 0;
+
   @override
   void initState() {
     super.initState();
-    setupFirebaseMessaging(); 
+    setupFirebaseMessaging(); // Configura notificações
   }
-
-  int _currentIndex = 0;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Guia Saúde Local',
-      
+      title: "Guia Saúde Local",
+
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      
+
       home: Scaffold(
         body: IndexedStack(
           index: _currentIndex,
@@ -105,21 +126,20 @@ class _MyAppState extends State<MyApp> {
             CampanhasScreen(),
           ],
         ),
+
         bottomNavigationBar: NavigationBar(
           selectedIndex: _currentIndex,
           onDestinationSelected: (index) {
-            setState(() {
-              _currentIndex = index;
-            });
+            setState(() => _currentIndex = index);
           },
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.map),
-              label: 'Postos',
+              label: "Postos",
             ),
             NavigationDestination(
               icon: Icon(Icons.campaign),
-              label: 'Campanhas',
+              label: "Campanhas",
             ),
           ],
         ),

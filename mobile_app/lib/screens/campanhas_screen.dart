@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../services/vacinacao_service.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -110,7 +111,7 @@ class _CampanhasScreenState extends State<CampanhasScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _cidadeDetectada != null 
+                  _cidadeDetectada != null
                       ? "Buscando locais em: $_cidadeDetectada - $_ufDetectada"
                       : "Detectando sua localização...",
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal),
@@ -129,6 +130,13 @@ class _CampanhasScreenState extends State<CampanhasScreen> {
             child: _buildContent(),
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          NotificationService().showRandomHealthTipNow();
+        },
+        tooltip: 'Receber Dica de Saúde',
+        child: const Icon(Icons.lightbulb_outline),
       ),
     );
   }

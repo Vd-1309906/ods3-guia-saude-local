@@ -4,9 +4,13 @@ import 'package:http/http.dart' as http;
 import '../models/posto_saude_model.dart';
 
 class ApiService {
-  // Base URL para chamadas ao backend local (mantida para compatibilidade)
-  // Ajuste conforme sua rede de desenvolvimento quando necessário.
-  static const String baseUrl = 'http://192.168.18.210:8000';
+  // --- ATENÇÃO: CONFIGURAÇÃO DE REDE ---
+  // Para testar num telemóvel FÍSICO, substitua o IP abaixo pelo IP LOCAL do seu computador.
+  // Ambos os dispositivos (computador e telemóvel) devem estar na MESMA rede Wi-Fi.
+  // Para descobrir o seu IP no Windows, abra o CMD ou PowerShell e digite: ipconfig
+  //
+  // Se estiver a usar um EMULADOR Android, o IP correto é: http://10.0.2.2:8000
+  static const String baseUrl = 'http://192.168.18.201:8000'; // <-- SUBSTITUA ESTE IP
 
   // A API pública de UBS
   static const String postosPublicUrl = 'https://apidadosabertos.saude.gov.br/assistencia-a-saude/unidade-basicas-de-saude?limit=600&offset=0';

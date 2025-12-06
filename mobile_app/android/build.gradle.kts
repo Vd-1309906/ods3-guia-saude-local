@@ -24,7 +24,7 @@ tasks.register<Delete>("clean") {
 }
 buildscript {
     // A sintaxe "ext." vira "val ... by extra"
-    val kotlin_version by extra("1.8.10")    
+    val kotlin_version by extra("2.1.0")    
     repositories {
         google()
         mavenCentral()
